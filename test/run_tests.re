@@ -24,6 +24,13 @@ let () = {
   Ignore_tests.runFile();
   Store_tests.run();
   Walk_tests.run();
+  Rank_tests.run();
+  Rows_tests.run();
+  Trash_tests.run();
+  Scan_tests.run();
+  Scan_tests.runEntries();
+  Scan_tests.runStepped();
+  Scan_tests.runThreaded();
 
   Test.finish();
 };

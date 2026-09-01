@@ -10,9 +10,13 @@
   cli_tests
   fuzzy_tests
   ignore_tests
+  rank_tests
+  rows_tests
+  trash_tests
   store_tests
   walk_tests
+  scan_tests
   run_tests)
- (libraries matcha hogApp unix)
+ (libraries matcha hogApp unix threads.posix)
  (deps
   (universe)))
