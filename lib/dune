@@ -1,0 +1,11 @@
+; Everything real lives here so that test/app_tests.re can start the exact
+; same component headlessly - the binary in bin/ is a thin launcher.
+;
+; threads.posix is listed because matcha does not link threads itself, and
+; Scan.start runs the filesystem walk on a background systhread.
+(library
+ (name hogApp)
+ (wrapped false)
+ (libraries matcha unix threads.posix)
+ (preprocess
+  (pps matcha.ppx)))

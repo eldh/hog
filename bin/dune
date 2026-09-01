@@ -1,0 +1,5 @@
+; Thin launcher. No JSX here, so no preprocess stanza.
+(executable
+ (name main)
+ (public_name hog)
+ (libraries matcha hogApp))

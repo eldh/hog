@@ -1,0 +1,18 @@
+; The suites build real directory trees on disk and read them back, so
+; nothing about them is cacheable on their source alone.
+(test
+ (name run_tests)
+ (modules
+  test
+  input
+  fixture
+  fmt_tests
+  cli_tests
+  fuzzy_tests
+  ignore_tests
+  store_tests
+  walk_tests
+  run_tests)
+ (libraries matcha hogApp unix)
+ (deps
+  (universe)))
