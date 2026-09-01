@@ -16,6 +16,7 @@
   store_tests
   walk_tests
   scan_tests
+  app_tests
   run_tests)
  (libraries matcha hogApp unix threads.posix)
  (deps

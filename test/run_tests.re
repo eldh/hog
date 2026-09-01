@@ -31,6 +31,7 @@ let () = {
   Scan_tests.runEntries();
   Scan_tests.runStepped();
   Scan_tests.runThreaded();
+  App_tests.run();
 
   Test.finish();
 };

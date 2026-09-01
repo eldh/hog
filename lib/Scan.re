@@ -464,19 +464,98 @@ let resolve = (h: handle, p: string): option(Store.id) =>
 /* The list for a view. `scope = None` is the landing view - the ranked
    frontier, the biggest things anywhere. `scope = Some(path)` is the
    drill-down: that directory's immediate children, plain and complete,
-   because once you have descended you want a file manager, not an opinion. */
+   because once you have descended you want a file manager, not an opinion.
+ *
+ * Takes the SNAPSHOT rather than the handle, so that a caller physically
+ * cannot mix a `ranked` array from one generation with anything read at
+ * another. Making the rule structural is worth more than the convenience of
+ * passing a handle: the failure it prevents is a cross-generation index,
+ * which only misbehaves under load and never in a test. */
 let entries =
-    (h: handle, ~scope: option(string), ~showIgnored: bool): array(Store.id) => {
-  let snap = Atomic.get(h.hPublished);
+    (h: handle, ~snapshot: snapshot, ~scope: option(string), ~showIgnored: bool)
+    : array(Store.id) =>
   switch (scope) {
-  | None => snap.ranked
+  | None =>
+    /* The published ranking already excludes ignored nodes, so revealing
+       them has to re-rank. That costs microseconds and only happens on the
+       keypress, which is a better trade than publishing two rankings ten
+       times a second for a view the user is usually not in. */
+    showIgnored
+      ? Rank.frontierRevealed(h.hStore, ~root=Store.rootId, ~params=h.hParams)
+      : snapshot.ranked
   | Some(p) =>
     switch (Store.resolve(h.hStore, p)) {
     | None => [||]
     | Some(id) => Rank.sortedChildren(h.hStore, id, ~showIgnored)
     }
   };
-};
+
+/* Mark a subtree ignored and take its bytes back out of every ancestor.
+ *
+ * This is what makes the `i` key honest. Without it the row disappears but
+ * the header keeps counting the twenty gigabytes the user just said they
+ * did not want to see, and the totals stay wrong until the next full scan.
+ * The subtraction is O(depth) - ten integer adds - because sizes propagate
+ * upward eagerly, so the arithmetic is already there to undo.
+ *
+ * Returns false, and changes nothing, WHILE A SCAN IS RUNNING: `addUp` is a
+ * read-modify-write over every ancestor, so doing it from the UI thread
+ * while the scan thread is doing its own would silently lose updates. That
+ * is the single-writer invariant at the top of this file, and it is not
+ * negotiable for a convenience. The caller falls back to hiding the row,
+ * and the rule takes effect properly on the next run. */
+let applyIgnore = (h: handle, ~path: string): bool =>
+  if (isScanning(h)) {
+    false;
+  } else {
+    switch (Store.resolve(h.hStore, path)) {
+    | None => false
+    | Some(id) =>
+      let n = Store.get(h.hStore, id);
+      if (Store.hasFlag(n.Store.flags, Store.fIgnored)) {
+        false; /* already ignored: subtracting twice would go negative */
+      } else {
+        n.Store.flags = n.Store.flags lor Store.fIgnored;
+        /* items + 1, not items: `node.items` counts what is BELOW the node,
+           while every ancestor was also charged one for the node itself. */
+        Store.addUp(
+          h.hStore,
+          id,
+          ~bytes=- n.Store.size,
+          ~items=- (n.Store.items + 1),
+        );
+        publish(h, ~phase=Atomic.get(h.hPublished).phase, ~finished=None);
+        true;
+      };
+    };
+  };
+
+/* The inverse, for un-ignoring within a session. Only meaningful for a node
+   that was ignored by applyIgnore - one pruned during the walk has no size
+   to give back, because we never opened it. */
+let unapplyIgnore = (h: handle, ~path: string): bool =>
+  if (isScanning(h)) {
+    false;
+  } else {
+    switch (Store.resolve(h.hStore, path)) {
+    | None => false
+    | Some(id) =>
+      let n = Store.get(h.hStore, id);
+      if (! Store.hasFlag(n.Store.flags, Store.fIgnored)) {
+        false;
+      } else {
+        n.Store.flags = n.Store.flags land lnot(Store.fIgnored);
+        Store.addUp(
+          h.hStore,
+          id,
+          ~bytes=n.Store.size,
+          ~items=n.Store.items + 1,
+        );
+        publish(h, ~phase=Atomic.get(h.hPublished).phase, ~finished=None);
+        true;
+      };
+    };
+  };
 
 let store = (h: handle): Store.t => h.hStore;
 let root = (h: handle): string => h.hRoot;

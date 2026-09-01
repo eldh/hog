@@ -46,8 +46,12 @@ Built with [matcha](https://github.com/eldh/matcha).
 | `i` | ignore the selected entry · `I` reveals ignored entries |
 | `d` | move to Trash |
 | `o` | reveal in Finder |
-| `r` | rescan |
+| `r` | re-rank from the selected folder — the landing view's "biggest anywhere", rooted here |
 | `q` / `Ctrl+C` | quit |
+
+`i` takes effect immediately: the row goes, and the bytes come back out of
+every total above it. The rule is also written to the ignore file, so the
+next run skips the directory entirely instead of walking it.
 
 ## The ignore list
 

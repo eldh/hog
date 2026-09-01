@@ -78,21 +78,55 @@ let () =
           printErr("not a directory: " ++ root);
           exit(1);
         } else {
-          /* TODO: once Ignore, Scan and HogApp land, this becomes:
-           *   let ignoreList = Ignore.load(~extra=config.Cli.ignores);
-           *   let handle = Scan.start(~root, ~ignores=ignoreList, ~config, ...);
-           *   Matcha.Runtime.start(~screen=Fullscreen, HogApp.make(~handle, ...));
-           * For now, print what was resolved so the CLI plumbing is
-           * checkable end to end before any of those modules exist. */
-          Printf.printf("root: %s\n", root);
-          Printf.printf(
-            "config: ignores=[%s] minSize=%d showIgnored=%b crossDevices=%b\n",
-            String.concat(",", config.Cli.ignores),
-            config.Cli.minSize,
-            config.Cli.showIgnored,
-            config.Cli.crossDevices,
+          let home =
+            switch (Sys.getenv_opt("HOME")) {
+            | Some(h) => h
+            | None => root
+            };
+
+          /* The ignore file, created with the shipped defaults on first run.
+             Its warning - an unreadable file, or a config directory that
+             could not be created - is printed HERE, on the ordinary terminal,
+             because under Fullscreen there is no scrollback to commit it to
+             once the app is running. */
+          let (rules, warning) = Ignore.load(~home);
+          switch (warning) {
+          | Some(msg) => printErr(msg)
+          | None => ()
+          };
+
+          /* -i/--ignore rules are kept SEPARATE from the file's rules rather
+             than merged into them. Both are consulted by the walk, but only
+             the file's rules are handed to the app - and the app's `i` key
+             rewrites exactly that set back to disk. Merging would silently
+             persist a one-off command-line glob into the user's ignore file
+             the first time they pressed `i`. */
+          let cliRules =
+            Ignore.compile(~home, Array.of_list(config.Cli.ignores));
+          let shouldIgnore = (~name: string, ~path: string) =>
+            Ignore.matches(rules, ~name, ~path)
+            || Ignore.matches(cliRules, ~name, ~path);
+
+          /* --min-size is a display and ranking floor, never a walk filter:
+             filtering during the walk would corrupt every parent total. */
+          let params = {...Rank.defaults, Rank.minBytes: config.Cli.minSize};
+          let scan =
+            Scan.start(
+              ~root,
+              ~home,
+              ~shouldIgnore,
+              ~crossDevices=config.Cli.crossDevices,
+              ~params,
+              (),
+            );
+
+          /* Fullscreen, not Inline: the root Flexes to fill the terminal, and
+             an inline app that tall scrolls the user's shell history away for
+             good. The alternate screen is restored exactly on exit. */
+          Matcha.Runtime.start(
+            ~screen=Fullscreen,
+            HogApp.app(~scan, ~config, ~rules, ~trash=Trash.move),
           );
-          exit(0);
         }
       };
     };

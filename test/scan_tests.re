@@ -148,7 +148,13 @@ let runEntries = () =>
     Test.run("the landing view is the ranked frontier", () =>
       Fixture.withTree(tree, root => {
         let h = Scan.scanSync(~root, ~home, ~shouldIgnore=ignoreNothing, ());
-        let landing = Scan.entries(h, ~scope=None, ~showIgnored=false);
+        let landing =
+          Scan.entries(
+            h,
+            ~snapshot=Scan.published(h),
+            ~scope=None,
+            ~showIgnored=false,
+          );
         Test.assertTrue(
           landing == Scan.published(h).Scan.ranked,
           "scope=None is the published ranking",
@@ -162,6 +168,7 @@ let runEntries = () =>
         let kids =
           Scan.entries(
             h,
+            ~snapshot=Scan.published(h),
             ~scope=Some(Filename.concat(root, "big")),
             ~showIgnored=false,
           );
@@ -180,11 +187,96 @@ let runEntries = () =>
         let h = Scan.scanSync(~root, ~home, ~shouldIgnore=ignoreNothing, ());
         Test.assertEqualInt(
           Array.length(
-            Scan.entries(h, ~scope=Some(root ++ "/nope"), ~showIgnored=false),
+            Scan.entries(
+              h,
+              ~snapshot=Scan.published(h),
+              ~scope=Some(root ++ "/nope"),
+              ~showIgnored=false,
+            ),
           ),
           0,
           "empty",
         );
+      })
+    );
+
+    Test.run("applyIgnore subtracts the subtree from every ancestor", () =>
+      /* This is what makes the `i` key honest. Hiding the row is easy; the
+         part that is easy to get wrong is the header still counting the
+         bytes the user just said they did not want to see. */
+      Fixture.withTree(tree, root => {
+        let h = Scan.scanSync(~root, ~home, ~shouldIgnore=ignoreNothing, ());
+        let store = Scan.store(h);
+        let gen = Scan.generation(h);
+        Test.assertTrue(
+          Scan.applyIgnore(h, ~path=Filename.concat(root, "big")),
+          "applied",
+        );
+        Test.assertEqualInt(
+          Store.total(store),
+          treeTotal - 700_000,
+          "the root total drops by exactly the subtree",
+        );
+        /* The item count has to fall too, and by the subtree's node count
+           INCLUDING the node itself - `items` counts what is below a node,
+           but every ancestor was charged one for the node as well. Asserting
+           only the bytes lets that off-by-one through, which is exactly what
+           happened the first time this was written. */
+        Test.assertEqualInt(
+          Store.get(store, Store.rootId).Store.items,
+          4 + 2 - 3, /* four files and two dirs, less big/ and its two files */
+          "and so does the item count",
+        );
+        Test.assertTrue(
+          Scan.generation(h) > gen,
+          "a new snapshot is published so the UI repaints",
+        );
+        Test.assertFalse(
+          Array.exists(
+            id => Store.get(store, id).Store.name == "big",
+            Scan.published(h).Scan.ranked,
+          ),
+          "and it leaves the ranking",
+        );
+      })
+    );
+
+    Test.run("applyIgnore is idempotent, and unapplyIgnore reverses it", () =>
+      /* Subtracting twice would drive the ancestors negative, which is why
+         the second call has to be refused rather than merely wasteful. */
+      Fixture.withTree(tree, root => {
+        let h = Scan.scanSync(~root, ~home, ~shouldIgnore=ignoreNothing, ());
+        let store = Scan.store(h);
+        let p = Filename.concat(root, "big");
+        Test.assertTrue(Scan.applyIgnore(h, ~path=p), "first call applies");
+        Test.assertFalse(Scan.applyIgnore(h, ~path=p), "second call refuses");
+        Test.assertEqualInt(
+          Store.total(store),
+          treeTotal - 700_000,
+          "still subtracted exactly once",
+        );
+        Test.assertTrue(Scan.unapplyIgnore(h, ~path=p), "reversed");
+        Test.assertEqualInt(
+          Store.total(store),
+          treeTotal,
+          "and the total comes back",
+        );
+      })
+    );
+
+    Test.run("applyIgnore refuses while a scan is running", () =>
+      /* The single-writer invariant: addUp is a read-modify-write over every
+         ancestor, so running it from this thread while the walk runs its own
+         would silently lose updates. Refusing is the whole point. */
+      Fixture.withTree(tree, root => {
+        let h = Scan.stepped(~root, ~home, ~shouldIgnore=ignoreNothing, ());
+        Test.assertTrue(Scan.isScanning(h), "still scanning");
+        Test.assertFalse(
+          Scan.applyIgnore(h, ~path=Filename.concat(root, "big")),
+          "refused while the walk owns the arena",
+        );
+        Scan.cancel(h);
+        Scan.finish(h);
       })
     );
 

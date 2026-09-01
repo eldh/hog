@@ -94,6 +94,21 @@ let excludedMask = Store.fIgnored lor Store.fOtherDev lor Store.fHardLink;
 
 let isCandidate = (n: Store.node): bool => n.Store.flags land excludedMask == 0;
 
+/* The same test with reveal (`I`) held on.
+ *
+ * fIgnored is the only one of the three that may be lifted, and only because
+ * there are two kinds of ignored node. One was PRUNED during the walk and
+ * has no measured size at all - revealing it can put it in a list but never
+ * meaningfully in a ranking, and it simply falls below the threshold. The
+ * other was ignored from inside the application AFTER being measured, so it
+ * has a real size and deserves its real place the moment the user asks to
+ * see it again.
+ *
+ * fOtherDev and fHardLink stay excluded either way: both are deliberately
+ * size 0, so ranking them could only ever produce rows reading "0B". */
+let isCandidateRevealed = (n: Store.node): bool =>
+  n.Store.flags land (Store.fOtherDev lor Store.fHardLink) == 0;
+
 /* T = max(minBytes, total / minFraction), where `total` is the size of the
    subtree being ranked - which for the default root is exactly
    Store.total. Guarded against a zero divisor so that a caller-supplied
@@ -215,7 +230,14 @@ let heapPop = (h: heap, ~before: (Store.id, Store.id) => bool): Store.id => {
  * Dominance is the claim "splitting N hands you a child that stands for
  * almost all of it", and a child we would refuse to emit cannot support that
  * claim. */
-let surveyChildren = (t: Store.t, id: Store.id, ~threshold: int): (int, int) => {
+let surveyChildrenWith =
+    (
+      t: Store.t,
+      id: Store.id,
+      ~eligible: Store.node => bool,
+      ~threshold: int,
+    )
+    : (int, int) => {
   let count = ref(0);
   let largest = ref(0);
   Store.iterChildren(
@@ -223,7 +245,7 @@ let surveyChildren = (t: Store.t, id: Store.id, ~threshold: int): (int, int) => 
     id,
     child => {
       let n = Store.get(t, child);
-      if (isCandidate(n) && n.Store.size >= threshold) {
+      if (eligible(n) && n.Store.size >= threshold) {
         incr(count);
         if (n.Store.size > largest^) {
           largest := n.Store.size;
@@ -236,8 +258,14 @@ let surveyChildren = (t: Store.t, id: Store.id, ~threshold: int): (int, int) => 
 
 /* ---------------------------------------------------------- the frontier */
 
-let frontier =
-    (t: Store.t, ~root: Store.id, ~params: params): array(Store.id) => {
+let frontierWith =
+    (
+      t: Store.t,
+      ~eligible: Store.node => bool,
+      ~root: Store.id,
+      ~params: params,
+    )
+    : array(Store.id) => {
   let rootNode = Store.get(t, root);
   let maxRows = max(0, params.maxRows);
   let limit = threshold(~total=rootNode.Store.size, ~params);
@@ -253,7 +281,7 @@ let frontier =
         id,
         child => {
           let n = Store.get(t, child);
-          if (isCandidate(n) && n.Store.size >= limit) {
+          if (eligible(n) && n.Store.size >= limit) {
             push(child);
           };
         },
@@ -285,7 +313,7 @@ let frontier =
       let deep = node.Store.depth - rootNode.Store.depth >= params.maxDepth;
       let splittable = node.Store.kind == Store.Dir && ! deep;
       let (a, m) =
-        splittable ? surveyChildren(t, n, ~threshold=limit) : (0, 0);
+        splittable ? surveyChildrenWith(t, n, ~eligible, ~threshold=limit) : (0, 0);
       let split =
         splittable
         && a >= 1
@@ -307,6 +335,28 @@ let frontier =
     Array.length(rows) > maxRows ? Array.sub(rows, 0, maxRows) : rows;
   };
 };
+
+/* ------------------------------------------------- the public entry points */
+
+/* Two named entry points rather than one with an optional flag: an optional
+ * argument only ERASES when a positional parameter follows it, and both of
+ * these take nothing but labels. An optional here would silently turn
+ * `frontier(t, ~root, ~params)` into a closure at every call site rather
+ * than an array - and two names read better than a boolean anyway. */
+let frontier = (t: Store.t, ~root: Store.id, ~params: params): array(Store.id) =>
+  frontierWith(t, ~eligible=isCandidate, ~root, ~params);
+
+/* With reveal (`I`) on: an ignored node that was MEASURED before being
+   ignored takes its real place again. One that was pruned during the walk
+   has no size at all and simply falls below the threshold, which is the
+   honest outcome rather than a special case. */
+let frontierRevealed =
+    (t: Store.t, ~root: Store.id, ~params: params): array(Store.id) =>
+  frontierWith(t, ~eligible=isCandidateRevealed, ~root, ~params);
+
+/* The survey helper, unchanged, so tests can assert WHY a node split. */
+let surveyChildren = (t: Store.t, id: Store.id, ~threshold: int): (int, int) =>
+  surveyChildrenWith(t, id, ~eligible=isCandidate, ~threshold);
 
 /* ------------------------------------------------------- the drill-down */
 
