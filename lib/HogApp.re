@@ -25,10 +25,15 @@
  * Hooks.dispatchMouse ends with an unconditional fan-out to
  * rootCtx.mouseHandlers - every mouse event reaches the root, in frame
  * coordinates, whatever component is innermost under the pointer. A
- * [@component] root would get its own child context instead, and the
- * <ScrollView> (which registers useMouse for the wheel) would be the
- * innermost target over the list, swallowing every click. Click-to-select
- * would silently never fire.
+ * [@component] root would be an ordinary component instead, subject to
+ * innermost-wins, so anything that claimed a click would keep it.
+ *
+ * That used to be a much sharper trap: before matcha 0.3.0 the <ScrollView>
+ * itself claimed every click while acting only on the wheel, so clicks over
+ * a ~rows list vanished with no error anywhere. ScrollView now declares
+ * ~click=false and is transparent to them. The bare root is still the right
+ * shape here - this app wants a whole-frame observer - but it is now a
+ * preference rather than the only thing that works.
  *
  * The other half of that arrangement is the root's ~wheel=false: the root
  * declares no wheel interest, so a notch picks the ScrollView as its target
@@ -48,14 +53,15 @@
  *
  * ============================ MEMO DEPENDENCIES ===========================
  *
- * Hooks.useMemo compares deps by PHYSICAL equality, so every dep in this
- * file is an immediate through Obj.repr: an int or a bool, never an array,
- * a string, a tuple or a record. A freshly allocated dep is never equal to
- * itself and silently turns every memo into a no-op, reintroducing exactly
- * the cost the memo existed to remove. The stand-in for each string-valued
- * piece of state is a GENERATION COUNTER carried in the same useState cell
- * as the value, so a frame can never read a new counter against an old
- * string.
+ * Hooks.useMemo compares deps by identity, with immediates and STRINGS as
+ * the exceptions (matcha 0.3.0). So `query` is a plain string dep and needs
+ * no ceremony. Anything else - an array, a tuple, a record, a variant, an
+ * option - is a fresh block every render, is never equal to itself, and
+ * silently turns the memo into a no-op that reintroduces exactly the cost it
+ * existed to remove. The stand-in for each of those is a GENERATION COUNTER
+ * carried in the SAME useState cell as the value, so a frame can never read
+ * a new counter against an old value. That is why `view`, `sel`, the ignore
+ * rules and the trashed list are all (gen, value) pairs and `query` is not.
  */
 open Matcha;
 
@@ -334,7 +340,7 @@ let app =
           let a frame read a new counter against an old value. */
        let (pollGen, setPollGen) = Hooks.useState(0);
        let (viewState, setViewState) = Hooks.useState((0, Landing));
-       let (queryState, setQueryState) = Hooks.useState((0, ""));
+       let (query, setQuery) = Hooks.useState("");
        let (filterOpen, setFilterOpen) = Hooks.useState(false);
        let (cursor, setCursor) = Hooks.useState((0, 0));
        let (taSel, setTaSel) = Hooks.useState(None: option(TextArea.selection));
@@ -362,7 +368,6 @@ let app =
        let landingRef = Hooks.useRef(None: option(string));
 
        let (viewGen, view) = viewState;
-       let (queryGen, query) = queryState;
        let (selGen, selPath) = selState;
        let (ignoreGen, rules, sessionIgnored) = ignoreState;
        let (trashedGen, trashed) = trashedState;
@@ -496,7 +501,7 @@ let app =
              Obj.repr(viewGen),
              Obj.repr(ignoreGen),
              Obj.repr(showIgnored),
-             Obj.repr(queryGen),
+             Obj.repr(query),
              Obj.repr(trashedGen),
            |],
          );
@@ -532,7 +537,7 @@ let app =
              Obj.repr(viewGen),
              Obj.repr(ignoreGen),
              Obj.repr(showIgnored),
-             Obj.repr(queryGen),
+             Obj.repr(query),
              Obj.repr(trashedGen),
              Obj.repr(selGen),
            |],
@@ -572,7 +577,7 @@ let app =
              Obj.repr(viewGen),
              Obj.repr(ignoreGen),
              Obj.repr(showIgnored),
-             Obj.repr(queryGen),
+             Obj.repr(query),
              Obj.repr(trashedGen),
              Obj.repr(listW),
            |],
@@ -716,7 +721,7 @@ let app =
          };
 
        let setQueryTo = (q: string): unit => {
-         setQueryState((queryGen + 1, q));
+         setQuery(q);
          setOffset(0);
        };
 
