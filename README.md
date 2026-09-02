@@ -117,6 +117,11 @@ opam pin add -y hog .
 
 ## Development
 
+This repository opts into matcha's `matcha-app` Claude Code skill through
+`.claude/settings.json`, so an agent working here starts with the framework's
+own app-authoring guidance — the rules below, and rather more, in the form it
+reads them. See matcha's README for what it covers.
+
 ```
 dune build
 dune runtest

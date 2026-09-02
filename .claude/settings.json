@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "matcha": {
+      "source": {
+        "source": "github",
+        "repo": "eldh/matcha"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "matcha-app@matcha": true
+  }
+}
